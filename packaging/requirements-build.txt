@@ -1,0 +1,4 @@
+pyinstaller>=6.6
+sv-ttk>=2.6
+cryptography>=42
+pillow>=10.1

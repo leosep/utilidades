@@ -1,0 +1,33 @@
+name: Build installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build dependencies
+        run: python -m pip install -r packaging/requirements-build.txt
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Build installers
+        run: python packaging/build.py --version "${{ github.ref_type == 'tag' && github.ref_name || '1.0.0' }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: dist/installers/*
+      - name: Publish to the release (tags vX.Y.Z only)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/installers/*

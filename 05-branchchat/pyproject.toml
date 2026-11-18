@@ -1,0 +1,10 @@
+[project]
+name = "branchchat"
+version = "1.0.0"
+description = "View AI chats as a tree of branches and export only the path you chose."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+branchchat = "branchchat.cli:main"
+ramachat = "branchchat.cli:main"

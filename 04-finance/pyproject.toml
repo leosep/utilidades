@@ -1,0 +1,10 @@
+[project]
+name = "finance"
+version = "1.0.0"
+description = "Offline personal finance: import a bank CSV, categorize with rules and summarize by month."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+finance = "finance.cli:main"
+finanzas = "finance.cli:main"

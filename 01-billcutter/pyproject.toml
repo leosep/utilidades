@@ -1,0 +1,10 @@
+[project]
+name = "billcutter"
+version = "1.0.0"
+description = "Find subscriptions and recurring charges in your bank statement (CSV), fully offline."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+billcutter = "billcutter.cli:main"
+cortacobros = "billcutter.cli:main"

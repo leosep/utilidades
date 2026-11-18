@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo Cleaner: remove location and hidden data</title>
+<style>
+  :root {
+    --ink: #16202a; --muted: #55636f; --paper: #e8edf1; --panel: #ffffff;
+    --line: #c9d3db; --teal: #0e6b5e; --teal-ink: #ffffff; --rust: #a63d29; --focus: #1d4ed8;
+    --serif: Cambria, "Iowan Old Style", Georgia, serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 var(--sans); }
+  main { max-width: 64rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+  h1 { font: 700 clamp(2rem, 5vw, 3.2rem)/1.05 var(--serif); margin: 0 0 .75rem; letter-spacing: -.01em; }
+  .lead { max-width: 38rem; color: var(--muted); margin: 0 0 2rem; }
+  .grid { display: grid; gap: 1.25rem; grid-template-columns: 1fr; }
+  @media (min-width: 52rem) { .grid { grid-template-columns: 1.6fr 1fr; align-items: start; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 1.25rem; }
+  .drop { display: grid; place-items: center; text-align: center; min-height: 14rem; border: 2px dashed var(--teal);
+          border-radius: 6px; padding: 1.5rem; cursor: pointer; background: #f4faf8; }
+  .drop.over { background: #dcefe9; }
+  .drop strong { font: 700 1.4rem var(--serif); display: block; margin-bottom: .25rem; }
+  .drop span { color: var(--muted); }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: .9rem; }
+  legend { font: 700 1.1rem var(--serif); padding: 0; margin-bottom: .6rem; }
+  label { display: grid; gap: .25rem; font-size: .95rem; }
+  select, input[type=number] { font: inherit; padding: .5rem .6rem; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--ink); }
+  small { color: var(--muted); }
+  button { font: inherit; font-weight: 600; padding: .55rem 1rem; border-radius: 4px; border: 1px solid var(--teal); background: var(--teal); color: var(--teal-ink); cursor: pointer; }
+  button.secondary { background: transparent; color: var(--teal); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .bar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin: 2rem 0 .75rem; flex-wrap: wrap; }
+  .bar h2 { font: 700 1.4rem var(--serif); margin: 0; }
+  ul.files { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
+  .file { display: grid; grid-template-columns: 5rem 1fr; gap: 1rem; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: .9rem; }
+  .file img { width: 5rem; height: 5rem; object-fit: cover; border-radius: 4px; background: var(--paper); }
+  .file h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+  .sizes { color: var(--muted); font-size: .9rem; margin: .1rem 0 .5rem; }
+  .sizes b { color: var(--teal); }
+  .ledger { list-style: none; padding: 0; margin: 0 0 .6rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+  .ledger li { font-size: .85rem; padding: .15rem .55rem; border-radius: 999px; background: #fbeae6; color: var(--rust); text-decoration: line-through; }
+  .ledger li.clean { background: #e2f3ee; color: var(--teal); text-decoration: none; }
+  .error { color: var(--rust); font-weight: 600; }
+  .empty { color: var(--muted); }
+  @media (prefers-reduced-motion: no-preference) { .drop { transition: background .15s; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Photo Cleaner</h1>
+  <p class="lead">Remove GPS location, camera model and other hidden data from your photos, and shrink them before sending. Everything happens in your browser: the files never leave your device.</p>
+
+  <div class="grid">
+    <div class="drop" id="drop" role="button" tabindex="0" aria-label="Choose photos">
+      <div><strong>Drop your photos here</strong><span>or tap to choose them (JPG, PNG, WebP)</span></div>
+      <input id="picker" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
+    </div>
+
+    <form class="panel" id="options" onsubmit="return false">
+      <fieldset>
+        <legend>Output settings</legend>
+        <label>Format
+          <select id="format">
+            <option value="keep">Keep the original</option>
+            <option value="image/jpeg">JPEG</option>
+            <option value="image/webp">WebP</option>
+            <option value="image/png">PNG</option>
+          </select>
+        </label>
+        <label>Maximum width (px)
+          <input id="maxWidth" type="number" min="100" step="10" placeholder="No change">
+        </label>
+        <label>Maximum size (KB)
+          <input id="targetKb" type="number" min="20" step="10" placeholder="No limit">
+          <small>For JPEG and WebP. If needed, it also reduces the dimensions.</small>
+        </label>
+        <label>Quality: <output id="qualityOut">85</output>%
+          <input id="quality" type="range" min="40" max="100" value="85">
+        </label>
+        <small>Changing the settings applies to photos you add afterwards.</small>
+      </fieldset>
+    </form>
+  </div>
+
+  <div class="bar">
+    <h2>Results</h2>
+    <div>
+      <button class="secondary" id="clear" disabled>Clear list</button>
+      <button id="downloadAll" disabled>Download all</button>
+    </div>
+  </div>
+  <ul class="files" id="results"><li class="empty" id="empty">No photos yet. Add some to clean them.</li></ul>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const items = [];
+
+// ---------- Minimal EXIF reader (only to report what gets removed) ----------
+const EXIF_TAGS = { 0x010f: "Camera make", 0x0110: "Camera model", 0x0132: "Date modified", 0x013b: "Author", 0x8825: "GPS location", 0x9003: "Date taken" };
+
+function readAscii(view, base, little, entry) {
+  const count = view.getUint32(entry + 4, little);
+  const start = count > 4 ? view.getUint32(entry + 8, little) : entry + 8 - base;
+  let text = "";
+  for (let i = 0; i < count - 1 && base + start + i < view.byteLength; i++) text += String.fromCharCode(view.getUint8(base + start + i));
+  return text.trim();
+}
+
+function parseTiff(view, base) {
+  if (base + 8 > view.byteLength) return [];
+  const found = new Map();
+  try {
+    const little = view.getUint16(base) === 0x4949;
+    const walk = (offset, depth) => {
+      if (base + offset + 2 > view.byteLength) return;
+      const count = view.getUint16(base + offset, little);
+      for (let i = 0; i < count; i++) {
+        const entry = base + offset + 2 + i * 12;
+        if (entry + 12 > view.byteLength) return;
+        const tag = view.getUint16(entry, little);
+        if (tag === 0x8769 && depth < 2) walk(view.getUint32(entry + 8, little), depth + 1);
+        else if (EXIF_TAGS[tag]) {
+          let label = EXIF_TAGS[tag];
+          if (tag === 0x0110) { try { label += ": " + readAscii(view, base, little, entry); } catch (e) { /* keep going without the value */ } }
+          found.set(tag, label);
+        }
+      }
+    };
+    walk(view.getUint32(base + 4, little), 0);
+  } catch (e) { /* damaged EXIF: report whatever was read */ }
+  return [...found.values()];
+}
+
+async function findMetadata(file) {
+  if (file.type !== "image/jpeg") return [];
+  const view = new DataView(await file.slice(0, 262144).arrayBuffer());
+  if (view.byteLength < 4 || view.getUint16(0) !== 0xffd8) return [];
+  let offset = 2;
+  while (offset + 8 <= view.byteLength) {
+    const marker = view.getUint16(offset);
+    if ((marker & 0xff00) !== 0xff00 || marker === 0xffda) break;
+    if (marker === 0xffe1 && view.getUint32(offset + 4) === 0x45786966) return parseTiff(view, offset + 10);
+    const size = view.getUint16(offset + 2);
+    if (size < 2) break;
+    offset += 2 + size;
+  }
+  return [];
+}
+
+// ---------- Processing ----------
+const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+
+function toBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("The browser could not encode this format."))), type, quality));
+}
+
+async function render(bitmap, width, type, quality) {
+  const scale = width && bitmap.width > width ? width / bitmap.width : 1;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (type === "image/jpeg") { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return toBlob(canvas, type, quality);
+}
+
+async function clean(file, opts) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  const type = opts.format === "keep" ? (EXT[file.type] ? file.type : "image/jpeg") : opts.format;
+  let width = Math.min(opts.maxWidth || bitmap.width, bitmap.width);
+  let quality = opts.quality / 100;
+  let blob = await render(bitmap, width, type, quality);
+  const limit = opts.targetKb * 1024;
+  if (limit && type !== "image/png") {
+    for (let round = 0; round < 5 && blob.size > limit; round++) {
+      let low = 0.3, high = quality;
+      for (let i = 0; i < 6; i++) {
+        const mid = (low + high) / 2;
+        const attempt = await render(bitmap, width, type, mid);
+        if (attempt.size > limit) high = mid; else { low = mid; blob = attempt; }
+      }
+      if (blob.size > limit) { width = Math.round(width * 0.85); blob = await render(bitmap, width, type, 0.3); }
+    }
+  } else if (limit && blob.size > limit) {
+    for (let round = 0; round < 6 && blob.size > limit; round++) { width = Math.round(width * 0.85); blob = await render(bitmap, width, type, 1); }
+  }
+  bitmap.close();
+  return { blob, type };
+}
+
+// ---------- Interface ----------
+const fmt = (bytes) => (bytes > 1048576 ? (bytes / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB");
+const options = () => ({ format: $("format").value, maxWidth: Number($("maxWidth").value) || 0, targetKb: Number($("targetKb").value) || 0, quality: Number($("quality").value) });
+
+function download(item) {
+  const a = document.createElement("a");
+  a.href = item.url; a.download = item.outName; a.click();
+}
+
+function refreshButtons() {
+  const ready = items.filter((i) => i.url).length;
+  $("downloadAll").disabled = ready === 0;
+  $("clear").disabled = items.length === 0;
+  $("empty").hidden = items.length > 0;
+}
+
+async function addFile(file) {
+  const li = document.createElement("li");
+  li.className = "file";
+  li.innerHTML = '<img alt=""><div><h3></h3><p class="sizes">Processing…</p><ul class="ledger"></ul></div>';
+  li.querySelector("h3").textContent = file.name;
+  const item = { file, li };
+  items.push(item);
+  $("results").appendChild(li);
+  refreshButtons();
+  try {
+    const [found, result] = await Promise.all([findMetadata(file), clean(file, options())]);
+    item.url = URL.createObjectURL(result.blob);
+    item.outName = file.name.replace(/\.[^.]+$/, "") + "-clean." + EXT[result.type];
+    li.querySelector("img").src = item.url;
+    const saved = Math.round((1 - result.blob.size / file.size) * 100);
+    li.querySelector(".sizes").innerHTML = `${fmt(file.size)} → <b>${fmt(result.blob.size)}</b>${saved > 0 ? ` (−${saved}%)` : ""}`;
+    const ledger = li.querySelector(".ledger");
+    for (const label of found) ledger.insertAdjacentHTML("beforeend", "<li></li>"), (ledger.lastChild.textContent = label);
+    ledger.insertAdjacentHTML("beforeend", `<li class="clean">${found.length ? "Hidden data removed" : "No hidden data found; the image was regenerated anyway"}</li>`);
+    const button = document.createElement("button");
+    button.textContent = "Download";
+    button.addEventListener("click", () => download(item));
+    li.lastElementChild.appendChild(button);
+  } catch (error) {
+    li.querySelector(".sizes").innerHTML = '<span class="error"></span>';
+    li.querySelector(".error").textContent = "Could not process this image: " + error.message;
+  }
+  refreshButtons();
+}
+
+function addFiles(list) {
+  for (const file of list) {
+    if (EXT[file.type]) addFile(file);
+    else alert(`"${file.name}" is not JPG, PNG or WebP. For now only images can be cleaned.`);
+  }
+}
+
+const drop = $("drop"), picker = $("picker");
+drop.addEventListener("click", () => picker.click());
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); picker.click(); } });
+picker.addEventListener("change", () => { addFiles(picker.files); picker.value = ""; });
+["dragenter", "dragover"].forEach((n) => drop.addEventListener(n, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((n) => drop.addEventListener(n, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
+$("quality").addEventListener("input", (e) => ($("qualityOut").textContent = e.target.value));
+$("downloadAll").addEventListener("click", () => items.filter((i) => i.url).forEach((item, n) => setTimeout(() => download(item), n * 300)));
+$("clear").addEventListener("click", () => { items.forEach((i) => { i.url && URL.revokeObjectURL(i.url); i.li.remove(); }); items.length = 0; refreshButtons(); });
+</script>
+</body>
+</html>

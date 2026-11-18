@@ -1,0 +1,178 @@
+[
+  {
+    "title": "App idea for a repair shop",
+    "current_node": "a3b",
+    "mapping": {
+      "root": {
+        "id": "root",
+        "parent": null,
+        "children": [
+          "u1"
+        ],
+        "message": null
+      },
+      "u1": {
+        "id": "u1",
+        "parent": "root",
+        "children": [
+          "a1"
+        ],
+        "message": {
+          "id": "u1",
+          "author": {
+            "role": "user"
+          },
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "Give me a useful app idea for my repair business."
+            ]
+          }
+        }
+      },
+      "a1": {
+        "id": "a1",
+        "parent": "u1",
+        "children": [
+          "u2",
+          "u2b"
+        ],
+        "message": {
+          "id": "a1",
+          "author": {
+            "role": "assistant"
+          },
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "An app to track repair orders with customer notifications."
+            ]
+          }
+        }
+      },
+      "u2": {
+        "id": "u2",
+        "parent": "a1",
+        "children": [
+          "a2"
+        ],
+        "message": {
+          "id": "u2",
+          "author": {
+            "role": "user"
+          },
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "Make it simpler, without a server."
+            ]
+          }
+        }
+      },
+      "a2": {
+        "id": "a2",
+        "parent": "u2",
+        "children": [],
+        "message": {
+          "id": "a2",
+          "author": {
+            "role": "assistant"
+          },
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "Then a local HTML page with the list of orders and their status."
+            ]
+          }
+        }
+      },
+      "u2b": {
+        "id": "u2b",
+        "parent": "a1",
+        "children": [
+          "a2b"
+        ],
+        "message": {
+          "id": "u2b",
+          "author": {
+            "role": "user"
+          },
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "Better with WhatsApp notifications."
+            ]
+          }
+        }
+      },
+      "a2b": {
+        "id": "a2b",
+        "parent": "u2b",
+        "children": [
+          "u3b"
+        ],
+        "message": {
+          "id": "a2b",
+          "author": {
+            "role": "assistant"
+          },
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "You would need the WhatsApp Business API and a small server."
+            ]
+          }
+        }
+      },
+      "u3b": {
+        "id": "u3b",
+        "parent": "a2b",
+        "children": [
+          "a3b"
+        ],
+        "message": {
+          "id": "u3b",
+          "author": {
+            "role": "user"
+          },
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "OK, how much would it cost to maintain?"
+            ]
+          }
+        }
+      },
+      "a3b": {
+        "id": "a3b",
+        "parent": "u3b",
+        "children": [],
+        "message": {
+          "id": "a3b",
+          "author": {
+            "role": "assistant"
+          },
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "It depends on the message volume; start by measuring how many notifications you send per month."
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "Linear chat (chat_messages format)",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "text": "Hi"
+      },
+      {
+        "sender": "assistant",
+        "text": "Hi! How can I help?"
+      }
+    ]
+  }
+]
