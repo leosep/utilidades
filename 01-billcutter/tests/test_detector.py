@@ -4,7 +4,7 @@ from datetime import date
 from pathlib import Path
 
 from billcutter.cli import main
-from billcutter.csvio import parse_amount, parse_date, read_charges
+from billcutter.csvio import parse_amount, parse_date, read_charges, read_charges_report
 from billcutter.detector import detect_subscriptions, normalize_merchant
 from billcutter.models import Charge
 
@@ -99,6 +99,20 @@ class CsvAndCliTests(unittest.TestCase):
             path = Path(tmp) / "x.csv"
             path.write_text("a,b\n1,2\n", encoding="utf-8")
             self.assertEqual(main([str(path)]), 1)
+
+    def test_unreadable_rows_are_reported(self):
+        content = ("Date,Description,Amount\n"
+                   "05/01/2026,GYM FIT,-25.00\n"
+                   "31/02/2026,BAD DATE,-25.00\n"
+                   "05/03/2026,BAD AMOUNT,abc\n"
+                   ",,99.00\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bad.csv"
+            path.write_text(content, encoding="utf-8")
+            report = read_charges_report(path)
+        self.assertEqual(len(report.charges), 1)
+        self.assertEqual(report.skipped, 2)
+        self.assertEqual(len(report.skipped_samples), 2)
 
 
 if __name__ == "__main__":

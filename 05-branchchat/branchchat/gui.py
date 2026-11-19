@@ -1,7 +1,9 @@
 """BranchChat graphical interface."""
 from __future__ import annotations
 
+import atexit
 import tempfile
+import time
 import tkinter as tk
 import webbrowser
 from pathlib import Path
@@ -21,6 +23,10 @@ class BranchChatApp(AppWindow):
                          "branchchat", icon="assets/branchchat.ico", size=(1040, 680))
         self.conversations: list[Conversation] = []
         self.conv: Conversation | None = None
+        self._temp_files: list[Path] = []
+        self._clean_stale_temp_files()
+        atexit.register(self._cleanup)
+        self.root.protocol("WM_DELETE_WINDOW", self._close)
         self._build()
         self.set_status("Everything is processed on your computer.")
 
@@ -65,6 +71,29 @@ class BranchChatApp(AppWindow):
         self._bold = body_font.copy()  # keep a reference so Tk does not free the font
         self._bold.configure(weight="bold")
         self.preview.tag_configure("who", font=self._bold, spacing1=8)
+
+    # -- temporary files ----------------------------------------------------------------
+    @staticmethod
+    def _clean_stale_temp_files() -> None:
+        """Remove pages left behind by a previous crash; the chats are private."""
+        for path in Path(tempfile.gettempdir()).glob("branchchat-*.html"):
+            try:
+                if time.time() - path.stat().st_mtime > 24 * 60 * 60:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _cleanup(self) -> None:
+        for path in self._temp_files:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._temp_files.clear()
+
+    def _close(self) -> None:
+        self._cleanup()
+        self.root.destroy()
 
     # -- data ---------------------------------------------------------------------------
     def choose_file(self) -> None:
@@ -115,7 +144,9 @@ class BranchChatApp(AppWindow):
             return
         with tempfile.NamedTemporaryFile("w", suffix=".html", prefix="branchchat-", delete=False, encoding="utf-8") as handle:
             handle.write(to_html(self.conv))
-        webbrowser.open(Path(handle.name).as_uri())
+        page = Path(handle.name)
+        self._temp_files.append(page)
+        webbrowser.open(page.as_uri())
 
     def save_path(self) -> None:
         leaf_id = self.leaf_table.selected()

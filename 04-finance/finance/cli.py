@@ -4,13 +4,14 @@ import argparse
 import sys
 from pathlib import Path
 
-from .importer import load_profile, read_rows
-from .ledger import Ledger, default_db_path
+from .importer import load_profile, read_rows_report
+from .ledger import DEFAULT_ACCOUNT, Ledger, default_db_path
 from .parsing import format_cents
 from .report import render_month
 
 _ALIASES = {"importar": "import", "regla": "rule", "recategorizar": "recategorize",
-            "pendientes": "pending", "asignar": "set", "resumen": "summary"}
+            "pendientes": "pending", "asignar": "set", "resumen": "summary",
+            "exportar": "export", "respaldo": "backup"}
 _RULE_ALIASES = {"agregar": "add", "listar": "list", "quitar": "remove"}
 
 
@@ -31,6 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     imp = sub.add_parser("import", aliases=["importar"], help="Import a bank CSV")
     imp.add_argument("file", type=Path)
     imp.add_argument("--profile", "--perfil", dest="profile", type=Path, help="JSON with your bank's columns")
+    imp.add_argument("--account", "--cuenta", dest="account", default=DEFAULT_ACCOUNT,
+                     help=f"Name of the account or card this file belongs to ({DEFAULT_ACCOUNT})")
 
     rule = sub.add_parser("rule", aliases=["regla"], help="Manage categorization rules")
     rsub = rule.add_subparsers(dest="rule_cmd", required=True)
@@ -48,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     setc.add_argument("category")
     rep = sub.add_parser("summary", aliases=["resumen"], help="Monthly summary")
     rep.add_argument("--month", "--mes", dest="month", help="yyyy-mm (default: the last month with data)")
+    exp = sub.add_parser("export", aliases=["exportar"], help="Export every transaction to CSV")
+    exp.add_argument("-o", "--output", "--salida", dest="output", type=Path, default=Path("finance-export.csv"))
+    bak = sub.add_parser("backup", aliases=["respaldo"], help="Copy the database to a safe file")
+    bak.add_argument("-o", "--output", "--salida", dest="output", type=Path, default=Path("finance-backup.db"))
     return p
 
 
@@ -59,8 +66,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if cmd == "import":
             profile = load_profile(args.profile) if args.profile else None
-            added, dup = ledger.import_rows(read_rows(args.file, profile))
+            report = read_rows_report(args.file, profile)
+            added, dup = ledger.import_rows(report.rows, args.account)
             print(f"Imported: {added}. Duplicates (already there): {dup}.")
+            if report.skipped:
+                print(f"Rows that could not be read: {report.skipped}", file=sys.stderr)
+                for sample in report.skipped_samples:
+                    print(f"  {sample}", file=sys.stderr)
+            if not report.rows:
+                print("No rows could be imported. Check the date format or create a profile.", file=sys.stderr)
+                return 1
             pending = len(ledger.uncategorized(10_000))
             if pending:
                 print(f"{pending} uncategorized transactions. Review with: finance pending")
@@ -87,6 +102,10 @@ def main(argv: list[str] | None = None) -> int:
                 print("No transactions yet. Import a CSV first.")
             else:
                 print(render_month(month, ledger.month_rows(month)))
+        elif cmd == "export":
+            print(f"Exported to {ledger.export_csv(args.output)}")
+        elif cmd == "backup":
+            print(f"Backup saved to {ledger.backup(args.output)}")
     except (OSError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1

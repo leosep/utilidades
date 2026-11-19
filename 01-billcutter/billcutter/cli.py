@@ -7,7 +7,7 @@ from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
 
-from .csvio import read_charges
+from .csvio import read_charges_report
 from .detector import detect_subscriptions
 
 
@@ -50,12 +50,17 @@ def _format_report(subs, today: date, window: int) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        charges = read_charges(args.file, day_first=not args.month_first)
+        report = read_charges_report(args.file, day_first=not args.month_first)
     except (OSError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 
-    subs = detect_subscriptions(charges)
+    if report.skipped:
+        print(f"Rows that could not be read: {report.skipped}", file=sys.stderr)
+        for sample in report.skipped_samples:
+            print(f"  {sample}", file=sys.stderr)
+
+    subs = detect_subscriptions(report.charges)
     if args.json:
         print(json.dumps([asdict(s) for s in subs], default=str, ensure_ascii=False, indent=2))
     else:

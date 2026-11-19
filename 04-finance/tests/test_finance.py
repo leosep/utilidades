@@ -1,11 +1,12 @@
+import sqlite3
 import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
 
 from finance.cli import main
-from finance.importer import Profile, load_profile, read_rows
-from finance.ledger import Ledger
+from finance.importer import Profile, load_profile, read_rows, read_rows_report
+from finance.ledger import DEFAULT_ACCOUNT, Ledger
 from finance.parsing import parse_amount_cents
 from finance.report import render_month
 
@@ -81,6 +82,50 @@ class ImportTests(Base):
         path = self.csv("Fecha,Descripción,Monto\n03/10/2026,TIENDA,-20,00\n")
         self.assertEqual(read_rows(path)[0].cents, -2000)
 
+    def test_unreadable_rows_are_reported_instead_of_disappearing(self):
+        path = self.csv(
+            "Date,Description,Amount\n"
+            "2026-10-01,GOOD,-10.00\n"
+            "13/31/2026,BAD DATE,-20.00\n"
+            "2026-10-03,BAD AMOUNT,abc\n"
+            ",,30.00\n"
+        )
+        report = read_rows_report(path)
+        self.assertEqual([r.description for r in report.rows], ["GOOD"])
+        self.assertEqual(report.skipped, 2)
+        self.assertEqual(len(report.skipped_samples), 2)
+
+    def test_two_accounts_with_the_same_charge_are_not_duplicates(self):
+        path = self.csv("Date,Description,Amount\n2026-10-01,COFFEE,-3.00\n")
+        rows = read_rows(path)
+        self.assertEqual(self.ledger.import_rows(rows, "Visa"), (1, 0))
+        self.assertEqual(self.ledger.import_rows(rows, "Mastercard"), (1, 0))
+        self.assertEqual(self.ledger.import_rows(rows, "Visa"), (0, 1))
+        self.assertEqual(self.ledger.accounts(), [DEFAULT_ACCOUNT, "Mastercard", "Visa"])
+
+    def test_old_database_gets_the_account_column(self):
+        old = self.tmp / "old.db"
+        db = sqlite3.connect(old)
+        db.executescript(
+            "CREATE TABLE tx (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, "
+            "description TEXT NOT NULL, cents INTEGER NOT NULL, category TEXT NOT NULL, "
+            "manual INTEGER NOT NULL DEFAULT 0, dedupe TEXT NOT NULL UNIQUE);"
+            "CREATE TABLE rules (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT NOT NULL UNIQUE, "
+            "category TEXT NOT NULL);"
+            "INSERT INTO tx (day, description, cents, category, dedupe) "
+            "VALUES ('2026-10-01', 'OLD', -100, 'Uncategorized', 'old-key');"
+        )
+        db.commit()
+        db.close()
+        migrated = Ledger(old)
+        try:
+            self.assertIn(DEFAULT_ACCOUNT, migrated.accounts())
+            self.assertEqual(migrated.month_transactions("2026-10")[0][5], DEFAULT_ACCOUNT)
+            self.assertEqual(migrated.import_rows(read_rows(self.csv(
+                "Date,Description,Amount\n2026-10-01,OLD,-1.00\n"))), (1, 0))
+        finally:
+            migrated.close()
+
 
 class RulesAndReportTests(Base):
     def test_rules_manual_and_recategorize(self):
@@ -118,6 +163,24 @@ class RulesAndReportTests(Base):
         income = sum(c for _, c in rows if c > 0)
         self.assertEqual(income, 250000)
 
+    def test_backup_is_a_working_database(self):
+        self.ledger.import_rows(read_rows(SAMPLE))
+        backup = self.ledger.backup(self.tmp / "backup.db")
+        copy = Ledger(backup)
+        try:
+            self.assertEqual(copy.months(), ["2026-09", "2026-10"])
+            self.assertEqual(len(copy.month_rows("2026-10")), len(self.ledger.month_rows("2026-10")))
+        finally:
+            copy.close()
+
+    def test_export_csv_contains_every_transaction(self):
+        self.ledger.import_rows(read_rows(SAMPLE), "Visa")
+        out = self.ledger.export_csv(self.tmp / "all.csv")
+        text = out.read_text(encoding="utf-8-sig")
+        self.assertIn("Date,Description,Amount,Category,Account", text)
+        self.assertIn("Visa", text)
+        self.assertEqual(len(text.strip().splitlines()), len(read_rows(SAMPLE)) + 1)
+
     def test_cli_end_to_end(self):
         db = str(self.tmp / "cli.db")
         self.assertEqual(main(["--db", db, "import", str(SAMPLE)]), 0)
@@ -125,6 +188,20 @@ class RulesAndReportTests(Base):
         self.assertEqual(main(["--db", db, "recategorize"]), 0)
         self.assertEqual(main(["--db", db, "summary", "--month", "2026-10"]), 0)
         self.assertEqual(main(["--db", db, "import", str(self.tmp / "missing.csv")]), 1)
+        self.assertEqual(main(["--db", db, "export", "-o", str(self.tmp / "e.csv")]), 0)
+        self.assertTrue((self.tmp / "e.csv").exists())
+        self.assertEqual(main(["--db", db, "backup", "-o", str(self.tmp / "b.db")]), 0)
+        self.assertTrue((self.tmp / "b.db").exists())
+
+    def test_cli_account_and_skipped_rows(self):
+        db = str(self.tmp / "account.db")
+        path = self.csv("Date,Description,Amount\n2026-10-01,GOOD,-10.00\n13/31/2026,BAD,-1.00\n")
+        self.assertEqual(main(["--db", db, "import", "--account", "Visa", str(path)]), 0)
+        ledger = Ledger(Path(db))
+        try:
+            self.assertEqual(ledger.month_transactions("2026-10")[0][5], "Visa")
+        finally:
+            ledger.close()
 
     def test_legacy_spanish_commands_still_work(self):
         db = str(self.tmp / "legacy.db")

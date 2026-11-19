@@ -11,7 +11,7 @@ Each app has its own double-click installer: `Install-BillCutter-1.0.0.exe`, `In
 
 **Windows warning:** because the installers are not digitally signed, Windows may show "Windows protected your PC". Press **More info → Run anyway**. A (paid) code-signing certificate removes that warning. Verify the installers with `SHA256SUMS.txt`.
 
-Where your data is stored (back up these folders): Vault in `C:\Users\YOUR_USER\.vault`, Finance in `C:\Users\YOUR_USER\.finance`. If something fails, the error log is in `%LOCALAPPDATA%\UsefulUtilities`.
+Where your data is stored: Vault in `C:\Users\YOUR_USER\.vault`, Finance in `C:\Users\YOUR_USER\.finance`. Both apps have a **Back up** button and a `backup` command that makes a safe copy; prefer them over copying the folder while the app is open. If something fails, the error log is in `%LOCALAPPDATA%\UsefulUtilities`.
 
 ## For the person who builds them (you)
 

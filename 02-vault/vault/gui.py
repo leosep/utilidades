@@ -91,6 +91,39 @@ class AddDialog(Dialog):
         self.destroy()
 
 
+class ChangePasswordDialog(Dialog):
+    def __init__(self, parent: tk.Widget):
+        super().__init__(parent, "Change master password")
+        self.first, self.second = tk.StringVar(), tk.StringVar()
+        self.error = tk.StringVar()
+        ttk.Label(self.body, justify="left", style="Muted.TLabel", wraplength=360,
+                  text="The documents will be re-encrypted. If you forget the new password, "
+                       "nobody will be able to recover them.").grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(self.body, text="New password").grid(row=1, column=0, sticky="w", pady=(14, 0))
+        ttk.Entry(self.body, textvariable=self.first, show="•", width=34).grid(
+            row=1, column=1, sticky="ew", padx=(12, 0), pady=(14, 0))
+        ttk.Label(self.body, text="Repeat it").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(self.body, textvariable=self.second, show="•", width=34).grid(
+            row=2, column=1, sticky="ew", padx=(12, 0), pady=(10, 0))
+        ttk.Label(self.body, textvariable=self.error, style="Error.TLabel").grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        buttons = ttk.Frame(self.body)
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left", padx=(0, 8))
+        ttk.Button(buttons, text="Change password", style="Accent.TButton", command=self.save).pack(side="left")
+        self.bind("<Return>", lambda event: self.save())
+
+    def save(self) -> None:
+        if len(self.first.get()) < 10:
+            self.error.set("Use at least 10 characters.")
+            return
+        if self.first.get() != self.second.get():
+            self.error.set("The passwords do not match.")
+            return
+        self.result = self.first.get()
+        self.destroy()
+
+
 class VaultApp(AppWindow):
     def __init__(self, root_dir: Path | None = None, scrypt_n: int = crypto.DEFAULT_SCRYPT_N) -> None:
         super().__init__("Vault", "Your important documents, encrypted on your computer.", "vault",
@@ -201,6 +234,8 @@ class VaultApp(AppWindow):
         self.copy_button.pack(side="left", padx=8)
         self.delete_button = ttk.Button(actions, text="Delete", command=self.delete, state="disabled")
         self.delete_button.pack(side="left")
+        ttk.Button(actions, text="Change password…", command=self.change_password).pack(side="right")
+        ttk.Button(actions, text="Back up vault…", command=self.backup).pack(side="right", padx=8)
         self.set_status(f"Vault open · {self.root_dir} · locks itself after 10 minutes idle")
         self._touch()
         self.refresh()
@@ -263,6 +298,30 @@ class VaultApp(AppWindow):
         if doc and messagebox.askyesno("Delete document", f"Delete \"{doc.name}\" from the vault?\nThis cannot be undone.", default="no"):
             self.vault.remove(doc.id)
             self.refresh()
+
+    def backup(self) -> None:
+        target = filedialog.askdirectory(title="Choose a new, empty folder for the backup")
+        if not target:
+            return
+        try:
+            saved = self.vault.backup(Path(target))
+        except (VaultError, OSError) as error:
+            messagebox.showerror("Could not back up the vault", str(error))
+            return
+        messagebox.showinfo("Backup ready",
+                            f"The encrypted vault was copied to:\n{saved}\n\nKeep that folder somewhere safe.")
+
+    def change_password(self) -> None:
+        new_password = ChangePasswordDialog(self.root).show()
+        if not new_password:
+            return
+        try:
+            self.vault.change_password(new_password)
+        except (VaultError, OSError) as error:
+            messagebox.showerror("Could not change the password", str(error))
+            return
+        messagebox.showinfo("Password changed",
+                            "The documents were re-encrypted. Use the new password from now on.")
 
 
 # Name used by the original Spanish version; kept so old imports keep working.

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import re
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
@@ -81,8 +82,17 @@ def parse_date(text: str, day_first: bool = True) -> date | None:
     return None
 
 
-def read_charges(path: Path, day_first: bool = True) -> list[Charge]:
-    """Read a CSV and return only the expenses (positive amounts)."""
+@dataclass(frozen=True)
+class ChargesReport:
+    """Expenses that could be read, plus rows that looked like transactions and were not."""
+
+    charges: list[Charge]
+    skipped: int = 0
+    skipped_samples: list[str] = field(default_factory=list)
+
+
+def read_charges_report(path: Path, day_first: bool = True) -> ChargesReport:
+    """Read a CSV, return the expenses and report the rows that could not be understood."""
     raw = _read_text(Path(path))
     try:
         dialect = csv.Sniffer().sniff(raw[:4096], delimiters=",;\t")
@@ -102,10 +112,22 @@ def read_charges(path: Path, day_first: bool = True) -> list[Charge]:
         )
 
     rows: list[tuple[date, str, float]] = []
+    skipped = 0
+    samples: list[str] = []
     for row in reader:
-        day = parse_date(row.get(date_col, ""), day_first)
+        values = [v.strip() for key, v in row.items() if key is not None and v and v.strip()]
+        if not values:
+            continue
+        date_text = (row.get(date_col) or "").strip()
+        day = parse_date(date_text, day_first)
         value = parse_amount(row.get(debit_col or amount_col, ""))
         if day is None or value is None:
+            # Ignore notes and totals without a date; warn about a row that has a date but
+            # no usable amount, or a date cell that cannot be read.
+            if day is not None or date_text:
+                skipped += 1
+                if len(samples) < 3:
+                    samples.append(" | ".join(values)[:160])
             continue
         rows.append((day, (row.get(desc_col) or "").strip(), value))
 
@@ -117,4 +139,9 @@ def read_charges(path: Path, day_first: bool = True) -> list[Charge]:
         spent = abs(value) if debit_col else (-value if has_negative else value)
         if spent > 0:
             charges.append(Charge(day, desc, round(spent, 2)))
-    return charges
+    return ChargesReport(charges, skipped, samples)
+
+
+def read_charges(path: Path, day_first: bool = True) -> list[Charge]:
+    """Read a CSV and return only the expenses (positive amounts)."""
+    return read_charges_report(path, day_first).charges

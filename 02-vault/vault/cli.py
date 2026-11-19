@@ -25,6 +25,20 @@ def _password(confirm: bool = False) -> str:
     return first
 
 
+def _new_password() -> str:
+    env = os.environ.get("VAULT_NEW_PASSWORD") or os.environ.get("BOVEDA_NEW_PASSWORD")
+    if env:
+        if len(env) < 10:
+            raise VaultError("Use at least 10 characters: if you forget it, the documents cannot be recovered.")
+        return env
+    first = getpass.getpass("New master password: ")
+    if len(first) < 10:
+        raise VaultError("Use at least 10 characters: if you forget it, the documents cannot be recovered.")
+    if getpass.getpass("Repeat it: ") != first:
+        raise VaultError("The passwords do not match.")
+    return first
+
+
 def _row(doc: Document, today: date) -> str:
     status = ""
     if doc.expires:
@@ -59,6 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
     rm.add_argument("id", type=int)
     exp = sub.add_parser("expiring", help="Expired or soon-to-expire documents")
     exp.add_argument("--days", "--dias", dest="days", type=int, default=60)
+    sub.add_parser("passwd", aliases=["contrasena"], help="Change the master password")
+    bak = sub.add_parser("backup", aliases=["respaldo"], help="Copy the vault to another folder")
+    bak.add_argument("destination", type=Path, help="New, empty folder")
     return p
 
 
@@ -91,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
             elif args.cmd == "expiring":
                 docs = vault.expiring(args.days, today)
                 print("\n".join(_row(d, today) for d in docs) or f"Nothing expires in the next {args.days} days.")
+            elif args.cmd == "passwd":
+                vault.change_password(_new_password())
+                print("Password changed. The documents were re-encrypted.")
+            elif args.cmd == "backup":
+                print(f"Backup saved to {vault.backup(args.destination)}")
         finally:
             vault.close()
     except WrongPassword:

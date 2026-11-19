@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
@@ -28,6 +28,15 @@ class ParsedRow:
     day: date
     description: str
     cents: int  # expenses negative, income positive
+
+
+@dataclass(frozen=True)
+class ReadReport:
+    """Rows that could be imported, plus the ones that could not be understood."""
+
+    rows: list[ParsedRow]
+    skipped: int = 0
+    skipped_samples: list[str] = field(default_factory=list)
 
 
 _AUTO = {
@@ -71,7 +80,17 @@ def _resolve(headers: list[str], wanted: str | None, field: str) -> str | None:
     return None
 
 
-def read_rows(path: Path, profile: Profile | None = None) -> list[ParsedRow]:
+def _cell(record: dict, column: str | None) -> str:
+    return (record.get(column) or "").strip() if column else ""
+
+
+def read_rows_report(path: Path, profile: Profile | None = None) -> ReadReport:
+    """Read a CSV and also count the rows that looked like transactions but could not be parsed.
+
+    Bank statements often end with totals or notes. Those lines are ignored, but a row with a
+    valid date and a broken amount (or the other way around) is reported as skipped so it
+    cannot disappear silently.
+    """
     profile = profile or Profile()
     raw = _read_text(Path(path))
     try:
@@ -89,17 +108,38 @@ def read_rows(path: Path, profile: Profile | None = None) -> list[ParsedRow]:
         )
 
     rows: list[ParsedRow] = []
+    skipped = 0
+    samples: list[str] = []
     for record in reader:
-        day = parse_date(record.get(cols["date"], ""), profile.day_first)
-        if day is None:
+        values = [v.strip() for key, v in record.items() if key is not None and v and v.strip()]
+        if not values:  # blank line between sections
             continue
+        date_text = _cell(record, cols["date"])
+        day = parse_date(date_text, profile.day_first)
         if cols["amount"]:
-            cents = parse_amount_cents(record.get(cols["amount"], ""))
+            cents = parse_amount_cents(_cell(record, cols["amount"]))
         else:
-            debit = abs(parse_amount_cents(record.get(cols["debit"] or "", "")) or 0)
-            credit = abs(parse_amount_cents(record.get(cols["credit"] or "", "")) or 0)
-            cents = credit - debit
-        if cents is None or cents == 0:
+            debit_text = _cell(record, cols["debit"])
+            credit_text = _cell(record, cols["credit"])
+            debit = parse_amount_cents(debit_text) if debit_text else None
+            credit = parse_amount_cents(credit_text) if credit_text else None
+            if (debit_text and debit is None) or (credit_text and credit is None):
+                cents = None  # an amount cell exists but cannot be read
+            else:
+                cents = abs(credit or 0) - abs(debit or 0)
+
+        if day is None or cents is None or cents == 0:
+            # A line without a date is a total or a note, not a transaction. A line with a date
+            # that cannot be used is a real row that would otherwise disappear silently.
+            if day is not None or date_text:
+                skipped += 1
+                if len(samples) < 3:
+                    samples.append(" | ".join(values)[:160])
             continue
-        rows.append(ParsedRow(day, (record.get(cols["description"]) or "").strip(), -cents if profile.invert else cents))
-    return rows
+        rows.append(ParsedRow(day, _cell(record, cols["description"]),
+                              -cents if profile.invert else cents))
+    return ReadReport(rows, skipped, samples)
+
+
+def read_rows(path: Path, profile: Profile | None = None) -> list[ParsedRow]:
+    return read_rows_report(path, profile).rows

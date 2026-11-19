@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import tkinter as tk
+from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from uikit import AppWindow, Dialog, Table, card_row
 
-from .importer import Profile, ParsedRow, load_profile, read_rows
-from .ledger import Ledger, default_db_path
+from .importer import Profile, ParsedRow, ReadReport, load_profile, read_rows_report
+from .ledger import DEFAULT_ACCOUNT, Ledger, default_db_path
 from .parsing import format_cents
 from .report import summarize
 from .rules import UNCATEGORIZED, UNCATEGORIZED_LEGACY
@@ -69,12 +70,21 @@ class FinanceApp(AppWindow):
     # -- construction ----------------------------------------------------------------
     def _build(self) -> None:
         bar = ttk.Frame(self.body)
-        bar.pack(fill="x", pady=(0, 10))
+        bar.pack(fill="x", pady=(0, 6))
         ttk.Button(bar, text="Import transactions…", style="Accent.TButton", command=self.import_csv).pack(side="left")
-        ttk.Checkbutton(bar, text="Dates are month/day/year", variable=self.month_first).pack(side="left", padx=16)
-        self.month_box = ttk.Combobox(bar, textvariable=self.month, state="readonly", width=18)
+        ttk.Button(bar, text="Export CSV…", command=self.export_csv).pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text="Back up…", command=self.backup).pack(side="left", padx=(8, 0))
+
+        filters = ttk.Frame(self.body)
+        filters.pack(fill="x", pady=(0, 10))
+        ttk.Label(filters, text="Account").pack(side="left")
+        self.account = tk.StringVar(value=DEFAULT_ACCOUNT)
+        self.account_box = ttk.Combobox(filters, textvariable=self.account, width=16)
+        self.account_box.pack(side="left", padx=(8, 20))
+        ttk.Checkbutton(filters, text="Dates are month/day/year", variable=self.month_first).pack(side="left")
+        self.month_box = ttk.Combobox(filters, textvariable=self.month, state="readonly", width=18)
         self.month_box.pack(side="right")
-        ttk.Label(bar, text="Month").pack(side="right", padx=(0, 8))
+        ttk.Label(filters, text="Month").pack(side="right", padx=(0, 8))
         self.month_box.bind("<<ComboboxSelected>>", lambda event: self.refresh_month())
 
         tabs = ttk.Notebook(self.body)
@@ -96,8 +106,9 @@ class FinanceApp(AppWindow):
                         command=self.refresh_transactions).pack(side="left")
         self.change_button = ttk.Button(filters, text="Change category…", command=self.change_category, state="disabled")
         self.change_button.pack(side="right")
-        self.moves_table = Table(moves, [("day", "Date", 100, "w"), ("description", "Description", 330, "w"),
-                                         ("amount", "Amount", 110, "e"), ("category", "Category", 170, "w")],
+        self.moves_table = Table(moves, [("day", "Date", 100, "w"), ("description", "Description", 300, "w"),
+                                         ("amount", "Amount", 105, "e"), ("category", "Category", 150, "w"),
+                                         ("account", "Account", 110, "w")],
                                  on_open=self.change_category, on_select=self._update_buttons,
                                  empty_text="No transactions in this month.")
         self.moves_table.pack(fill="both", expand=True)
@@ -122,6 +133,7 @@ class FinanceApp(AppWindow):
         months = self.ledger.months()
         self._month_by_label = {month_label(m): m for m in months}
         self.month_box["values"] = list(self._month_by_label)
+        self.account_box["values"] = self.ledger.accounts()
         if months and self.month.get() not in self._month_by_label:
             self.month.set(month_label(months[-1]))
         self.refresh_month()
@@ -146,11 +158,12 @@ class FinanceApp(AppWindow):
     def refresh_transactions(self) -> None:
         month = self.current_month()
         rows = []
-        for tx_id, day, description, cents, category in (self.ledger.month_transactions(month) if month else []):
+        for tx_id, day, description, cents, category, account in (self.ledger.month_transactions(month) if month else []):
             if self.only_pending.get() and category not in (UNCATEGORIZED, UNCATEGORIZED_LEGACY):
                 continue
             pending = category in (UNCATEGORIZED, UNCATEGORIZED_LEGACY)
-            rows.append((str(tx_id), (day_label(day), description, format_cents(cents), category), "warn" if pending else ""))
+            rows.append((str(tx_id), (day_label(day), description, format_cents(cents), category, account),
+                         "warn" if pending else ""))
         self.moves_table.set_rows(rows)
         self._update_buttons()
 
@@ -162,9 +175,9 @@ class FinanceApp(AppWindow):
         self.change_button.config(state="normal" if self.moves_table.selected() else "disabled")
 
     # -- actions --------------------------------------------------------------------------
-    def _read_csv(self, path: Path) -> list[ParsedRow] | None:
+    def _read_csv(self, path: Path) -> ReadReport | None:
         try:
-            return read_rows(path, Profile(day_first=not self.month_first.get()))
+            return read_rows_report(path, Profile(day_first=not self.month_first.get()))
         except ValueError as error:
             if not messagebox.askyesno("Could not recognize the columns", f"{error}\n\nDo you have a profile (.json) file for this bank?"):
                 return None
@@ -172,7 +185,7 @@ class FinanceApp(AppWindow):
         if not profile_path:
             return None
         try:
-            return read_rows(path, load_profile(Path(profile_path)))
+            return read_rows_report(path, load_profile(Path(profile_path)))
         except (OSError, ValueError) as error:
             messagebox.showerror("Could not read the file", str(error))
             return None
@@ -182,19 +195,60 @@ class FinanceApp(AppWindow):
                                             filetypes=[("Transactions (CSV)", "*.csv"), ("All files", "*.*")])
         if not chosen:
             return
-        rows = self._read_csv(Path(chosen))
-        if rows is None:
-            return
-        self.import_rows(rows)
+        report = self._read_csv(Path(chosen))
+        if report is not None:
+            self.import_rows(report)
 
-    def import_rows(self, rows: list[ParsedRow]) -> None:
-        added, duplicates = self.ledger.import_rows(rows)
+    def import_rows(self, rows: list[ParsedRow] | ReadReport) -> None:
+        report = rows if isinstance(rows, ReadReport) else ReadReport(list(rows))
+        if not report.rows:
+            messagebox.showwarning("Nothing imported",
+                                   "No rows could be read. Check the date format or create a profile for your bank.")
+            return
+        added, duplicates = self.ledger.import_rows(report.rows, self.account.get())
         self.refresh_all()
         pending = len(self.ledger.uncategorized(10_000))
         message = f"Imported: {added}. Already there: {duplicates}."
+        if report.skipped:
+            message += f" Rows skipped: {report.skipped}."
         if pending:
             message += f" Uncategorized: {pending} (check the Transactions tab)."
         self.set_status(message)
+        if report.skipped:
+            samples = "\n".join(report.skipped_samples)
+            messagebox.showwarning(
+                "Some rows could not be read",
+                f"{report.skipped} row(s) looked like transactions but could not be imported.\n"
+                "Check the date format or edit the CSV and import it again.\n\n"
+                f"{samples}",
+            )
+
+    def export_csv(self) -> None:
+        target = filedialog.asksaveasfilename(
+            title="Export every transaction", defaultextension=".csv", initialfile="finance-export.csv",
+            filetypes=[("CSV (Excel)", "*.csv")])
+        if not target:
+            return
+        try:
+            self.ledger.export_csv(Path(target))
+        except OSError as error:
+            messagebox.showerror("Could not export", str(error))
+            return
+        self.set_status(f"All transactions exported to {target}")
+
+    def backup(self) -> None:
+        target = filedialog.asksaveasfilename(
+            title="Back up the database", defaultextension=".db",
+            initialfile=f"finance-backup-{date.today().isoformat()}.db",
+            filetypes=[("SQLite database", "*.db")])
+        if not target:
+            return
+        try:
+            saved = self.ledger.backup(Path(target))
+        except OSError as error:
+            messagebox.showerror("Could not back up", str(error))
+            return
+        self.set_status(f"Backup saved to {saved}")
 
     def change_category(self) -> None:
         selected = self.moves_table.selected()

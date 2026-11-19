@@ -1,4 +1,5 @@
-pyinstaller>=6.6
-sv-ttk>=2.6
-cryptography>=42
-pillow>=10.1
+# Versions verified with the installers and the test suite (Python 3.12 on CI).
+pyinstaller==6.22.3
+sv-ttk==2.6.1
+cryptography==50.0.1
+pillow==12.3.0

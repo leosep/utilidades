@@ -6,13 +6,16 @@ A simple replacement for budgeting apps that disappear or fill up with ads: impo
 
 ```bash
 python -m finance import samples/transactions_example.csv
+python -m finance import visa.csv --account Visa   # optional: account or card name
 python -m finance pending                      # uncategorized transactions
 python -m finance rule add transfer Family
 python -m finance recategorize
 python -m finance summary --month 2026-10
+python -m finance export -o everything.csv     # every transaction, for a spreadsheet
+python -m finance backup -o backup.db          # consistent copy, even while the app is open
 ```
 
-Commands: `import`, `rule add|remove|list`, `recategorize`, `pending`, `set ID CATEGORY`, `summary [--month yyyy-mm]`.
+Commands: `import [--account NAME]`, `rule add|remove|list`, `recategorize`, `pending`, `set ID CATEGORY`, `summary [--month yyyy-mm]`, `export`, `backup`. The graphical interface has the same import, export and backup buttons.
 
 The original Spanish commands (`importar`, `regla`, `recategorizar`, `pendientes`, `asignar`, `resumen`, `--mes`, `--perfil`) still work.
 
@@ -21,7 +24,8 @@ The database is in `~/.finance/finance.db` (change it with `--db` or `$FINANCE_D
 ## How it works
 
 - **Rules:** if the description contains the text (ignoring case and accents), the category is assigned. The first matching rule wins. A set of English rules is included, with Spanish bank keywords too; edit them to taste.
-- **No duplicates:** you can import the same file twice or overlapping statements. Two identical purchases on the same day do count as two.
+- **No duplicates:** you can import the same file twice or overlapping statements. Two identical purchases on the same day do count as two. The account or card is part of the check, so the same charge on two cards is kept twice; keep using the same account name for the same file.
+- **Dates:** `dd/mm/yyyy` by default. If your bank writes `mm/dd/yyyy`, tick the box in the interface or set `"day_first": false` in a profile. Imported rows that cannot be read are reported instead of disappearing silently.
 - **Assigning by hand** protects a category: `recategorize` will not change it.
 - **Integer cents:** amounts are stored as integers, with no rounding errors.
 

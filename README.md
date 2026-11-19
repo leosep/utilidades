@@ -21,10 +21,24 @@ Built with Tkinter and the Sun Valley theme (`sv-ttk`), with a shared style in `
 ## Test everything
 
 ```bash
-pip install cryptography sv-ttk  # cryptography: vault · sv-ttk: interfaces
-./run_all_tests.sh              # needs Python 3.10+ and Node (only for the photo cleaner test)
+pip install cryptography sv-ttk   # vault, and the theme used by the interfaces
+python run_all_tests.py           # Windows, macOS and Linux; Node is only for the photo cleaner test
+./run_all_tests.sh                # same thing from a POSIX shell
 ```
+
+GitHub Actions runs the suite on **Windows and Linux** with Python 3.10 and 3.13. The interface tests run on Windows and, on Linux, under a virtual display when Tk is available. The photo cleaner was also checked end to end in Chromium during development (metadata detection and removal, resizing and the maximum-size limit).
+
+## Backups and recovery
+
+- **Vault:** `python -m vault backup <empty-folder>` or the "Back up vault…" button. The copy is a normal vault and opens with the same password.
+- **Finance:** `python -m finance backup -o <file>` or the "Back up…" button. It takes a consistent snapshot even while the app is open.
+- **Lost vault password:** there is no recovery. That is the point of the encryption; keep the password and a backup somewhere safe.
+- **Deleted documents:** deleting removes the encrypted file, but filesystems and SSDs may keep old blocks. Use full-disk encryption if that matters to you.
 
 ## Status
 
-Every project has automated tests that pass, including the interface tests under a virtual display, and the packaged executables were checked by starting them on Linux. **They have not been tested on Windows**, nor the `.exe` installers (they require Windows and Inno Setup), nor with real bank files or current exports from each service, nor the photo cleaner page in a real browser (only its metadata reader, with synthetic JPEGs). The READMEs state the limits of each tool.
+The automated suite covers parsing, storage, encryption, duplicate detection, the command line and the graphical interfaces, and runs in CI on Windows and Linux. **What is still not verified:** real bank exports from every bank, current exports from each AI service (their formats change), and the Windows installers themselves (they require Inno Setup and are built in CI; they are not digitally signed, so Windows SmartScreen warns). Each README states the limits of its tool.
+
+## License
+
+MIT. See `LICENSE`.

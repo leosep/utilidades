@@ -4,7 +4,7 @@ const path = require("path");
 const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 const script = html.match(/<script>([\s\S]*)<\/script>/)[1].split("// ---------- Processing")[0]
   .replace("const $ = (id) => document.getElementById(id);", "").replace("const items = [];", "");
-const { findMetadata } = new Function(script + "\nreturn { findMetadata };")();
+const { findMetadata, cleanSummary } = new Function(script + "\nreturn { findMetadata, cleanSummary };")();
 
 function jpegWithExif(little) {
   const w16 = (n) => (little ? [n & 255, n >> 8] : [n >> 8, n & 255]);
@@ -58,5 +58,9 @@ const assert = (cond, msg) => { if (!cond) { console.error("FAIL:", msg); proces
   assert((await findMetadata(fake(new Uint8Array([0xff, 0xd8, 0xff, 0xd9, 0, 0])))).length === 0, "jpeg without exif");
   assert((await findMetadata(fake(new Uint8Array(10), "image/png"))).length === 0, "png");
   assert((await findMetadata(slicedFake(jpegWithApp1AtTheEdge()))).length === 0, "APP1 at the edge of the window");
+  assert(cleanSummary("image/jpeg", 2) === "Hidden data removed", "jpeg with metadata");
+  assert(cleanSummary("image/jpeg", 0).includes("No hidden data"), "jpeg without metadata");
+  assert(cleanSummary("image/png", 0).includes("only available for JPEG"), "png is not inspected");
+  assert(cleanSummary("image/webp", 0).includes("only available for JPEG"), "webp is not inspected");
   console.log("EXIF OK");
 })();

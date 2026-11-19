@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 import sqlite3
 import unicodedata
 from dataclasses import dataclass, field
@@ -88,7 +89,8 @@ class Vault:
     def __init__(self, root: Path, key: bytes):
         self.root = Path(root)
         self._key = key
-        self._db = sqlite3.connect(db_path(self.root))
+        self._db = sqlite3.connect(db_path(self.root), timeout=10)
+        self._db.execute("PRAGMA busy_timeout = 10000")
 
     # -- creation and opening ------------------------------------------------
     @classmethod
@@ -153,11 +155,16 @@ class Vault:
         tmp = target.with_suffix(".tmp")
         tmp.write_bytes(crypto.encrypt(self._key, data))
         os.replace(tmp, target)  # atomic write: a partial file is never left behind
-        cursor = self._db.execute(
-            "INSERT INTO docs (blob_name, meta, created) VALUES (?, ?, ?)",
-            (blob_name, crypto.encrypt(self._key, json.dumps(meta).encode()), datetime.now(timezone.utc).isoformat()),
-        )
-        self._db.commit()
+        try:
+            cursor = self._db.execute(
+                "INSERT INTO docs (blob_name, meta, created) VALUES (?, ?, ?)",
+                (blob_name, crypto.encrypt(self._key, json.dumps(meta).encode()), datetime.now(timezone.utc).isoformat()),
+            )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            target.unlink(missing_ok=True)
+            raise
         return int(cursor.lastrowid)
 
     def _row_to_doc(self, doc_id: int, blob: bytes) -> Document:
@@ -195,6 +202,134 @@ class Vault:
         row = self._db.execute("SELECT blob_name FROM docs WHERE id = ?", (doc_id,)).fetchone()
         if row is None:
             raise VaultError(f"Document {doc_id} does not exist")
-        (self.root / "blobs" / row[0]).unlink(missing_ok=True)
+        # Delete the metadata first: if the process dies before removing the blob, only
+        # unused encrypted bytes remain. The other order would leave a broken document.
         self._db.execute("DELETE FROM docs WHERE id = ?", (doc_id,))
         self._db.commit()
+        (self.root / "blobs" / row[0]).unlink(missing_ok=True)
+
+    # -- maintenance ---------------------------------------------------------------
+    def backup(self, destination: Path) -> Path:
+        """Copy the database and every encrypted file to a folder that can be opened as a vault.
+
+        The SQLite snapshot is taken first and then the blobs it references are copied, so a
+        document added while the backup runs is either complete or absent, never half copied.
+        If a blob is missing the partial backup is removed and an error is raised.
+        """
+        destination = Path(destination)
+        if destination.exists():
+            if not destination.is_dir():
+                raise VaultError(f"{destination} is a file. Choose a folder for the backup.")
+            if any(destination.iterdir()):
+                raise VaultError(f"{destination} is not empty. Choose a new folder for the backup.")
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "blobs").mkdir(exist_ok=True)
+        target_db = destination / _DB_NAME
+        tmp_db = target_db.with_name(_DB_NAME + ".tmp")
+        tmp_db.unlink(missing_ok=True)
+        target = sqlite3.connect(tmp_db)
+        try:
+            self._db.backup(target)
+        except Exception:
+            target.close()
+            tmp_db.unlink(missing_ok=True)
+            shutil.rmtree(destination, ignore_errors=True)
+            raise
+        target.close()
+        snapshot = sqlite3.connect(tmp_db)
+        try:
+            rows = list(snapshot.execute("SELECT id, blob_name FROM docs ORDER BY id"))
+        finally:
+            snapshot.close()
+        source_blobs = self.root / "blobs"
+        try:
+            for doc_id, name in rows:
+                source = source_blobs / name
+                if not source.exists():
+                    raise VaultError(
+                        f"The backup is incomplete: the encrypted file of document {doc_id} is missing."
+                    )
+                shutil.copy2(source, destination / "blobs" / name)
+        except Exception:
+            tmp_db.unlink(missing_ok=True)
+            shutil.rmtree(destination, ignore_errors=True)
+            raise
+        os.replace(tmp_db, target_db)
+        return destination
+
+    def change_password(self, new_password: str, scrypt_n: int = crypto.DEFAULT_SCRYPT_N) -> None:
+        """Re-encrypt every document and all metadata with a key derived from a new password.
+
+        Everything is written to a staging folder first. The original vault is only replaced
+        after the new one is complete, and the swap is undone if a step fails.
+        """
+        if not new_password:
+            raise VaultError("The new password cannot be empty.")
+        staging = self.root / f".rekey-{secrets.token_hex(8)}"
+        salt = secrets.token_bytes(16)
+        new_key = crypto.derive_key(new_password, salt, scrypt_n)
+        staging_blobs = staging / "blobs"
+        staging_blobs.mkdir(parents=True)
+        new_db = sqlite3.connect(staging / _DB_NAME)
+        try:
+            new_db.executescript(_SCHEMA)
+            new_db.executemany(
+                "INSERT INTO meta VALUES (?, ?)",
+                [("salt", salt), ("scrypt_n", str(scrypt_n).encode()), ("check", crypto.make_check_token(new_key))],
+            )
+            self._db.execute("BEGIN IMMEDIATE")  # block other writers while we read every document
+            try:
+                rows = self._db.execute(
+                    "SELECT id, blob_name, meta, created FROM docs ORDER BY id").fetchall()
+                for doc_id, blob_name, meta, created in rows:
+                    plain_meta = crypto.decrypt(self._key, meta)
+                    data = crypto.decrypt(self._key, (self.root / "blobs" / blob_name).read_bytes())
+                    (staging_blobs / blob_name).write_bytes(crypto.encrypt(new_key, data))
+                    new_db.execute(
+                        "INSERT INTO docs (id, blob_name, meta, created) VALUES (?, ?, ?, ?)",
+                        (doc_id, blob_name, crypto.encrypt(new_key, plain_meta), created),
+                    )
+            finally:
+                self._db.rollback()
+            new_db.commit()
+        except Exception:
+            new_db.close()
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        new_db.close()
+
+        self._db.close()
+        old = self.root / f".old-{secrets.token_hex(8)}"
+        old.mkdir()
+        root_db = db_path(self.root)  # vaults created before the rename use boveda.db
+        db_name = root_db.name
+        root_blobs = self.root / "blobs"
+        moved = {"db_out": False, "db_in": False, "blobs_out": False, "blobs_in": False}
+        try:
+            os.replace(root_db, old / db_name)
+            moved["db_out"] = True
+            os.replace(staging / _DB_NAME, root_db)
+            moved["db_in"] = True
+            os.replace(root_blobs, old / "blobs")
+            moved["blobs_out"] = True
+            os.replace(staging_blobs, root_blobs)
+            moved["blobs_in"] = True
+        except Exception:
+            if moved["blobs_in"]:
+                os.replace(root_blobs, staging_blobs)
+            if moved["blobs_out"]:
+                os.replace(old / "blobs", root_blobs)
+            if moved["db_in"]:
+                os.replace(root_db, staging / _DB_NAME)
+            if moved["db_out"]:
+                os.replace(old / db_name, root_db)
+            shutil.rmtree(staging, ignore_errors=True)
+            shutil.rmtree(old, ignore_errors=True)
+            self._db = sqlite3.connect(db_path(self.root), timeout=10)
+            self._db.execute("PRAGMA busy_timeout = 10000")
+            raise
+        self._key = new_key
+        self._db = sqlite3.connect(db_path(self.root), timeout=10)
+        self._db.execute("PRAGMA busy_timeout = 10000")
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(old, ignore_errors=True)

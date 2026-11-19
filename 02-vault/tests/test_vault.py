@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 from vault.cli import main
 from vault.crypto import WrongPassword
@@ -85,6 +86,62 @@ class VaultTests(unittest.TestCase):
         with self.assertRaises(VaultError):
             Vault.create(self.root, "x" * 12, scrypt_n=FAST)
 
+    def test_backup_can_be_opened_as_a_vault(self):
+        doc_id = self.vault.add(self.doc, name="Passport", tags=["travel"])
+        destination = Path(self._tmp.name) / "backup"
+        self.vault.backup(destination)
+        copy = Vault.open(destination, "long-enough-pass-1")
+        try:
+            self.assertEqual([d.name for d in copy.list()], ["Passport"])
+            out = copy.get(doc_id, Path(self._tmp.name) / "from-backup.txt")
+            self.assertEqual(out.read_text(encoding="utf-8"), "SECRET NUMBER 12345")
+        finally:
+            copy.close()
+        with self.assertRaises(VaultError):
+            self.vault.backup(destination)  # refuses to mix with an existing backup
+
+    def test_change_password_reencrypts_documents_and_metadata(self):
+        doc_id = self.vault.add(self.doc, name="Passport", tags=["travel", "identity"])
+        self.vault.change_password("new-long-pass-2", scrypt_n=FAST)
+        self.vault.close()
+        with self.assertRaises(WrongPassword):
+            Vault.open(self.root, "long-enough-pass-1")
+        reopened = Vault.open(self.root, "new-long-pass-2")
+        try:
+            self.assertEqual([d.id for d in reopened.search("travel")], [doc_id])
+            out = reopened.get(doc_id, Path(self._tmp.name) / "after-rekey.txt")
+            self.assertEqual(out.read_text(encoding="utf-8"), "SECRET NUMBER 12345")
+        finally:
+            reopened.close()
+        self.vault = Vault.open(self.root, "new-long-pass-2")
+
+    def test_failed_rekey_leaves_the_original_vault_usable(self):
+        doc_id = self.vault.add(self.doc, name="Passport")
+        real_replace = os.replace
+        calls = {"count": 0}
+
+        def flaky_replace(source, target):
+            calls["count"] += 1
+            if calls["count"] == 3:  # fail while moving the original blobs
+                raise OSError("simulated disk failure")
+            return real_replace(source, target)
+
+        with mock.patch("vault.store.os.replace", side_effect=flaky_replace):
+            with self.assertRaises(OSError):
+                self.vault.change_password("new-long-pass-2", scrypt_n=FAST)
+        # The vault reconnected with the old key and the document is still readable.
+        out = self.vault.get(doc_id, Path(self._tmp.name) / "still-here.txt")
+        self.assertEqual(out.read_text(encoding="utf-8"), "SECRET NUMBER 12345")
+        self.assertEqual(list(self.root.glob(".rekey-*")), [])
+        self.assertEqual(list(self.root.glob(".old-*")), [])
+        self.vault.close()
+        reopened = Vault.open(self.root, "long-enough-pass-1")
+        try:
+            self.assertEqual([d.name for d in reopened.list()], ["Passport"])
+        finally:
+            reopened.close()
+        self.vault = Vault.open(self.root, "long-enough-pass-1")
+
     def test_legacy_database_name_still_opens(self):
         self.vault.close()
         (self.root / "vault.db").rename(self.root / "boveda.db")
@@ -95,6 +152,20 @@ class VaultTests(unittest.TestCase):
             legacy.close()
         self.vault = Vault.open(self.root, "long-enough-pass-1")  # keep tearDown happy
 
+    def test_change_password_works_on_a_legacy_named_database(self):
+        doc_id = self.vault.add(self.doc, name="Old file")
+        self.vault.close()
+        (self.root / "vault.db").rename(self.root / "boveda.db")
+        legacy = Vault.open(self.root, "long-enough-pass-1")
+        try:
+            legacy.change_password("new-long-pass-2", scrypt_n=FAST)
+            out = legacy.get(doc_id, Path(self._tmp.name) / "legacy.txt")
+            self.assertEqual(out.read_text(encoding="utf-8"), "SECRET NUMBER 12345")
+            self.assertEqual([d.name for d in legacy.list()], ["Old file"])
+        finally:
+            legacy.close()
+        self.vault = Vault.open(self.root, "new-long-pass-2")
+
     def test_cli_flow(self):
         os.environ["VAULT_PASSWORD"] = "long-enough-pass-2"
         try:
@@ -102,12 +173,18 @@ class VaultTests(unittest.TestCase):
             self.assertEqual(main(["--path", cli_root, "init"]), 0)
             self.assertEqual(main(["--path", cli_root, "add", str(self.doc), "--tags", "id", "--expires", "2027-01-01"]), 0)
             self.assertEqual(main(["--path", cli_root, "expiring", "--days", "400"]), 0)
+            os.environ["VAULT_NEW_PASSWORD"] = "new-long-pass-3"
+            self.assertEqual(main(["--path", cli_root, "backup", str(Path(self._tmp.name) / "cli-backup")]), 0)
+            self.assertEqual(main(["--path", cli_root, "passwd"]), 0)
+            os.environ["VAULT_PASSWORD"] = "new-long-pass-3"
+            self.assertEqual(main(["--path", cli_root, "list"]), 0)
             os.environ["VAULT_PASSWORD"] = "wrong"
             self.assertEqual(main(["--path", cli_root, "list"]), 2)
             os.environ["VAULT_PASSWORD"] = "short"
             self.assertEqual(main(["--path", str(Path(self._tmp.name) / "short"), "init"]), 1)
         finally:
             del os.environ["VAULT_PASSWORD"]
+            del os.environ["VAULT_NEW_PASSWORD"]
 
 
 if __name__ == "__main__":

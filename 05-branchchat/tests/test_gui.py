@@ -23,7 +23,10 @@ class GuiTests(unittest.TestCase):
         self.app = BranchChatApp()
 
     def tearDown(self):
-        self.app.root.destroy()
+        try:
+            self.app._close()
+        except Exception:  # the test may have closed the window already
+            pass
 
     def test_open_file_selects_chosen_branch_and_previews_it(self):
         self.app.load(SAMPLE)
@@ -53,6 +56,17 @@ class GuiTests(unittest.TestCase):
         with mock.patch("branchchat.gui.messagebox.showwarning") as warn:
             self.app.load(Path(__file__))
         self.assertTrue(warn.called)
+
+    def test_private_tree_page_is_removed_when_closing(self):
+        self.app.load(SAMPLE)
+        self.app.root.update()
+        with mock.patch("branchchat.gui.webbrowser.open"):
+            self.app.open_tree()
+        self.assertEqual(len(self.app._temp_files), 1)
+        page = self.app._temp_files[0]
+        self.assertTrue(page.exists())
+        self.app._close()
+        self.assertFalse(page.exists())
 
 
 if __name__ == "__main__":

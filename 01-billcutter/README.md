@@ -9,7 +9,7 @@ python -m billcutter samples/statement_example.csv
 python -m billcutter my_statement.csv --days 45 --json
 ```
 
-Options: `--month-first` (mm/dd/yyyy dates), `--days N` (upcoming renewal window), `--json`.
+Options: `--month-first` (mm/dd/yyyy dates), `--days N` (upcoming renewal window), `--json`. Dates are `dd/mm/yyyy` by default; if the file has dates like `05/13/2026` use the month-first option, otherwise rows are reported as unreadable. Rows that look like transactions but cannot be parsed are listed instead of being dropped silently.
 
 The original Spanish aliases `--mes-primero`, `--dias` and `--hoy` still work.
 

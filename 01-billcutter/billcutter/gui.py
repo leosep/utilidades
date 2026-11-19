@@ -10,7 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from uikit import AppWindow, Table, card_row, money
 
-from .csvio import read_charges
+from .csvio import read_charges_report
 from .detector import detect_subscriptions
 from .models import Subscription
 
@@ -68,14 +68,25 @@ class BillCutterApp(AppWindow):
 
     def load(self, path: Path) -> None:
         try:
-            charges = read_charges(path, day_first=not self.month_first.get())
+            report = read_charges_report(path, day_first=not self.month_first.get())
         except (OSError, ValueError) as error:
             messagebox.showwarning("Could not read the file", f"{error}\n\nTry the CSV you download from your bank's website.")
             return
         self.path = path
-        self.subs = detect_subscriptions(charges)
+        self.subs = detect_subscriptions(report.charges)
         self._show()
-        self.set_status(f"File: {path.name} · {len(charges)} expenses analyzed")
+        status = f"File: {path.name} · {len(report.charges)} expenses analyzed"
+        if report.skipped:
+            status += f" · {report.skipped} rows skipped"
+        self.set_status(status)
+        if report.skipped:
+            samples = "\n".join(report.skipped_samples)
+            messagebox.showwarning(
+                "Some rows could not be read",
+                f"{report.skipped} row(s) looked like transactions but could not be imported.\n"
+                "Check the date format (the checkbox at the top) or edit the CSV.\n\n"
+                f"{samples}",
+            )
 
     def _show(self) -> None:
         soon = date.today() + timedelta(days=7)

@@ -153,6 +153,11 @@ async function findMetadata(file) {
   return [];
 }
 
+function cleanSummary(fileType, foundCount) {
+  if (fileType !== "image/jpeg") return "Metadata inspection is only available for JPEG; the image was regenerated anyway";
+  return foundCount ? "Hidden data removed" : "No hidden data found; the image was regenerated anyway";
+}
+
 // ---------- Processing ----------
 const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
@@ -229,7 +234,7 @@ async function addFile(file) {
     li.querySelector(".sizes").innerHTML = `${fmt(file.size)} → <b>${fmt(result.blob.size)}</b>${saved > 0 ? ` (−${saved}%)` : ""}`;
     const ledger = li.querySelector(".ledger");
     for (const label of found) ledger.insertAdjacentHTML("beforeend", "<li></li>"), (ledger.lastChild.textContent = label);
-    ledger.insertAdjacentHTML("beforeend", `<li class="clean">${found.length ? "Hidden data removed" : "No hidden data found; the image was regenerated anyway"}</li>`);
+    ledger.insertAdjacentHTML("beforeend", `<li class="clean">${cleanSummary(file.type, found.length)}</li>`);
     const button = document.createElement("button");
     button.textContent = "Download";
     button.addEventListener("click", () => download(item));
